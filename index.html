@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Basketball Pro Mobile</title>
+    <title>Basketball Arcade Buttons</title>
     <style>
         body, html { 
             margin: 0; padding: 0; width: 100%; height: 100%; 
@@ -45,67 +45,93 @@ const courtImg = new Image();
 courtImg.src = "Basketball-Court-vector-illustra.jpg";
 
 let state = "MOVE"; 
-let mouse = { x: W/2, y: H/2 };
 let score = 0;
-let powerPoint = 0, powerDir = 0.008, finalTarget = { x: 0, y: 0 }, resultText = "";
-
+let powerPoint = 0, powerDir = 0.008, resultText = "";
 const gravity = 0.45;
 const ball = { x: 640, y: 600, z: 0, vx: 0, vy: 0, vz: 0, r: 22, active: false, bounced: false, isPerfect: false };
 
-/* ================= INPUT ENGINE (FIXED) ================= */
-function getTargetCoords(clientX, clientY) {
-    const rect = canvas.getBoundingClientRect();
-    // Вычисляем реальный коэффициент масштабирования canvas относительно экрана
-    const scaleX = W / rect.width;
-    const scaleY = H / rect.height;
-    return {
-        x: (clientX - rect.left) * scaleX,
-        y: (clientY - rect.top) * scaleY
-    };
+// Новые переменные для управления кнопками
+let playerPos = W / 2; // Горизонтальная позиция игрока
+let aimAngle = Math.PI / 2; // Угол прицеливания (0 - вправо, PI - влево, PI/2 - прямо)
+let aimTargetX = hoop.x; // Цель прицеливания по X
+let aimTargetY = hoop.y; // Цель прицеливания по Y
+
+// Настройки кнопок
+const BUTTON_SIZE = 80;
+const BUTTON_PADDING = 20;
+
+const buttons = {
+    left: { x: W - BUTTON_SIZE * 3 - BUTTON_PADDING * 3, y: H - BUTTON_SIZE - BUTTON_PADDING, w: BUTTON_SIZE, h: BUTTON_SIZE, action: "moveLeft" },
+    right: { x: W - BUTTON_SIZE * 2 - BUTTON_PADDING * 2, y: H - BUTTON_SIZE - BUTTON_PADDING, w: BUTTON_SIZE, h: BUTTON_SIZE, action: "moveRight" },
+    aimLeft: { x: W - BUTTON_SIZE * 3 - BUTTON_PADDING * 3, y: H - BUTTON_SIZE * 2 - BUTTON_PADDING * 2, w: BUTTON_SIZE, h: BUTTON_SIZE, action: "aimLeft" },
+    aimRight: { x: W - BUTTON_SIZE * 2 - BUTTON_PADDING * 2, y: H - BUTTON_SIZE * 2 - BUTTON_PADDING * 2, w: BUTTON_SIZE, h: BUTTON_SIZE, action: "aimRight" },
+    shoot: { x: BUTTON_PADDING, y: H - BUTTON_SIZE - BUTTON_PADDING, w: BUTTON_SIZE * 1.5, h: BUTTON_SIZE * 1.5, action: "shoot" } // Большая кнопка-мяч
+};
+
+/* ================= INPUT ENGINE (BUTTONS) ================= */
+function isPointInRect(px, py, rx, ry, rw, rh) {
+    return px > rx && px < rx + rw && py > ry && py < ry + rh;
 }
 
-function handleInputStart(clientX, clientY) {
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    const pos = getTargetCoords(clientX, clientY);
-    mouse.x = pos.x; mouse.y = pos.y;
+function handleButtonPress(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const scaleY = H / rect.height;
+    const clickX = (clientX - rect.left) * scaleX;
+    const clickY = (clientY - rect.top) * scaleY;
 
-    if (state === "MOVE") {
-        state = "AIM_LINE";
-    } else if (state === "AIM_LINE") {
-        finalTarget.x = mouse.x;
-        finalTarget.y = mouse.y;
-        state = "TIMING";
-        powerPoint = 0;
-    } else if (state === "TIMING") {
-        shoot(powerPoint > 0.75);
-        state = "SHOT";
-    } else if (state === "RESULT") {
-        state = "MOVE";
-        ball.active = false;
-        resultText = "";
+    if (audioCtx.state === 'suspended') audioCtx.resume(); // Активируем звук
+
+    for (const key in buttons) {
+        const btn = buttons[key];
+        if (isPointInRect(clickX, clickY, btn.x, btn.y, btn.w, btn.h)) {
+            performAction(btn.action);
+            return; // Обрабатываем только одно нажатие
+        }
     }
 }
 
-function handleInputMove(clientX, clientY) {
-    const pos = getTargetCoords(clientX, clientY);
-    mouse.x = pos.x;
-    mouse.y = pos.y;
+function performAction(action) {
+    switch (action) {
+        case "moveLeft":
+            if (state === "MOVE") playerPos = Math.max(200, playerPos - 15);
+            break;
+        case "moveRight":
+            if (state === "MOVE") playerPos = Math.min(W - 200, playerPos + 15);
+            break;
+        case "aimLeft":
+            if (state === "AIM_LINE") aimAngle = Math.min(Math.PI * 0.8, aimAngle + 0.05); // Ограничиваем угол
+            break;
+        case "aimRight":
+            if (state === "AIM_LINE") aimAngle = Math.max(Math.PI * 0.2, aimAngle - 0.05); // Ограничиваем угол
+            break;
+        case "shoot":
+            if (state === "MOVE") {
+                state = "AIM_LINE";
+            } else if (state === "AIM_LINE") {
+                // Фиксируем текущую траекторию как целевую
+                // Для параболы нужна дистанция и угол
+                const dist = Math.abs(hoop.x - ball.x);
+                aimTargetX = ball.x + Math.cos(aimAngle) * dist * 1.5; // Управляем X-компонентом
+                aimTargetY = ball.y - Math.sin(aimAngle) * dist * 1.5; // Управляем Y-компонентом
+                state = "TIMING";
+                powerPoint = 0;
+            } else if (state === "TIMING") {
+                shoot(powerPoint > 0.75);
+                state = "SHOT";
+            } else if (state === "RESULT") {
+                state = "MOVE";
+                ball.active = false;
+                resultText = "";
+            }
+            break;
+    }
 }
 
 // TOUCH Events
-canvas.addEventListener("touchstart", e => {
-    e.preventDefault();
-    handleInputStart(e.touches[0].clientX, e.touches[0].clientY);
-}, {passive: false});
-
-canvas.addEventListener("touchmove", e => {
-    e.preventDefault();
-    handleInputMove(e.touches[0].clientX, e.touches[0].clientY);
-}, {passive: false});
-
+canvas.addEventListener("touchstart", e => { e.preventDefault(); handleButtonPress(e.touches[0].clientX, e.touches[0].clientY); }, {passive: false});
 // MOUSE Events (для ПК)
-canvas.addEventListener("mousedown", e => handleInputStart(e.clientX, e.clientY));
-canvas.addEventListener("mousemove", e => handleInputMove(e.clientX, e.clientY));
+canvas.addEventListener("mousedown", e => handleButtonPress(e.clientX, e.clientY));
 
 /* ================= AUDIO & VIBRATE ================= */
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -117,7 +143,6 @@ function playSound(freq, duration) {
     o.connect(g); g.connect(audioCtx.destination);
     o.start(); o.stop(audioCtx.currentTime + duration);
 }
-
 function vibrate(ms) { if (navigator.vibrate) navigator.vibrate(ms); }
 
 /* ================= GAME LOGIC ================= */
@@ -132,9 +157,136 @@ function shoot(perfect) {
 
 function update() {
     if (state === "MOVE") {
-        ball.z = Math.max(0, Math.min(150, (1 - mouse.y / H) * 180));
-        ball.x = mouse.x;
+        ball.z = 50; // Фиксированная глубина для MOVE
+        ball.x = playerPos;
         ball.y = FLOOR_Y - ball.z * 1.5;
     }
+    if (state === "AIM_LINE") {
+        // Обновляем цель прицеливания
+        const distToHoop = Math.sqrt(Math.pow(hoop.x - ball.x, 2) + Math.pow(hoop.y - ball.y, 2));
+        aimTargetX = ball.x + Math.cos(aimAngle) * distToHoop;
+        aimTargetY = ball.y - Math.sin(aimAngle) * distToHoop;
+    }
     if (state === "TIMING") {
-        powerPoint += powerDir
+        powerPoint += powerDir;
+        if (powerPoint > 1 || powerPoint < 0) powerDir *= -1;
+    }
+    if (state === "SHOT" && ball.active) {
+        ball.x += ball.vx; ball.y += ball.vy; ball.z += ball.vz; ball.vy += gravity;
+        if (ball.z >= hoop.z && !ball.bounced) {
+            ball.bounced = true;
+            const xDist = Math.abs(ball.x - hoop.x);
+            if (ball.isPerfect && xDist < 55) {
+                ball.vz = 0; ball.vx *= 0.1; ball.vy = 2; score += 3;
+                resultText = "ПОПАДАНИЕ! +3"; playSound(800, 0.4); vibrate(40);
+            } else {
+                ball.vz *= -0.6; ball.vy = -3; ball.vx += (Math.random()-0.5)*12;
+                resultText = "ПРОМАХ"; playSound(150, 0.2); vibrate([50, 50, 50]);
+            }
+        }
+        if (ball.y >= FLOOR_Y) { ball.y = FLOOR_Y; ball.active = false; state = "RESULT"; }
+    }
+}
+
+/* ================= RENDER ================= */
+function drawButton(btn, text, color = "rgba(255,255,255,0.7)", textColor = "black") {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 10);
+    ctx.fill();
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.fillStyle = textColor;
+    ctx.font = `bold ${btn.h * 0.5}px Arial`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, btn.x + btn.w / 2, btn.y + btn.h / 2);
+}
+
+function drawShootButton() {
+    const btn = buttons.shoot;
+    ctx.save();
+    ctx.shadowColor = "rgba(255,255,0,0.8)";
+    ctx.shadowBlur = (state === "MOVE" || state === "AIM_LINE" || state === "TIMING") ? 15 : 0;
+    
+    ctx.fillStyle = (state === "TIMING" && powerPoint > 0.75) ? "#00ff00" : "orange";
+    ctx.beginPath();
+    ctx.arc(btn.x + btn.w / 2, btn.y + btn.h / 2, btn.w / 2 - 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    ctx.fillStyle = "black";
+    ctx.font = `bold ${btn.h * 0.3}px Arial`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("БРОСОК", btn.x + btn.w / 2, btn.y + btn.h / 2);
+    ctx.restore();
+}
+
+function drawParabolaPath() {
+    const startX = ball.x, startY = ball.y;
+    const targetX = aimTargetX; 
+    const targetY = aimTargetY;
+
+    const cpX = (startX + targetX) / 2;
+    const cpY = Math.min(startY, targetY) - 220; 
+
+    ctx.save(); ctx.shadowColor = "white"; ctx.shadowBlur = 4;
+    ctx.setLineDash([8, 8]); ctx.strokeStyle = "black"; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(startX, startY); ctx.quadraticCurveTo(cpX, cpY, targetX, targetY); ctx.stroke(); ctx.restore();
+
+    if (state === "TIMING") {
+        const t = powerPoint;
+        const dotX = (1-t)*(1-t)*startX + 2*(1-t)*t*cpX + t*t*targetX;
+        const dotY = (1-t)*(1-t)*startY + 2*(1-t)*t*cpY + t*t*targetY;
+        ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(dotX, dotY, 15, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = t > 0.75 ? "#00ff00" : "#ff0000"; ctx.beginPath(); ctx.arc(dotX, dotY, 10, 0, Math.PI*2); ctx.fill();
+    }
+}
+
+function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.drawImage(courtImg, 0, 0, W, H);
+    
+    // Тень
+    ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath();
+    ctx.ellipse(ball.x, FLOOR_Y, 45 * (1-ball.z/200), 15 * (1-ball.z/200), 0, 0, Math.PI*2); ctx.fill();
+
+    if (state === "AIM_LINE" || state === "TIMING") drawParabolaPath();
+
+    // Мяч
+    ctx.beginPath(); ctx.fillStyle = (ball.isPerfect && ball.active) ? "#00ff66" : "orange";
+    ctx.arc(ball.x, ball.y, ball.r * (1-ball.z/250), 0, Math.PI*2); ctx.fill(); 
+    ctx.strokeStyle = "black"; ctx.lineWidth = 2; ctx.stroke();
+
+    // UI
+    ctx.save(); ctx.fillStyle = "black"; ctx.font = "bold 34px Arial"; ctx.shadowColor = "white"; ctx.shadowBlur = 10;
+    ctx.fillText("СЧЕТ: " + score, 40, 60); ctx.restore();
+
+    if (state === "RESULT") {
+        ctx.textAlign = "center"; ctx.font = "bold 75px Arial"; ctx.fillStyle = "black";
+        ctx.shadowColor = "white"; ctx.shadowBlur = 12; ctx.fillText(resultText, W/2, H/2); ctx.textAlign = "left";
+    }
+
+    // Кнопки управления
+    if (state === "MOVE") {
+        drawButton(buttons.left, "◀");
+        drawButton(buttons.right, "▶");
+    } else if (state === "AIM_LINE") {
+        drawButton(buttons.aimLeft, "▲"); // Стрелки для изменения угла прицеливания
+        drawButton(buttons.aimRight, "▼");
+    }
+    drawShootButton(); // Кнопка броска всегда видима
+
+    requestAnimationFrame(draw);
+}
+
+courtImg.onload = () => draw();
+update();
+</script>
+</body>
+</html>
