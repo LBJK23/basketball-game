@@ -3,290 +3,167 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Basketball Arcade Buttons</title>
+    <title>Basketball Telegram Pro</title>
     <style>
         body, html { 
             margin: 0; padding: 0; width: 100%; height: 100%; 
             overflow: hidden; background: #000; position: fixed;
             touch-action: none; -webkit-user-select: none;
-            font-family: sans-serif;
         }
         canvas { 
             display: block; width: 100vw; height: 100vh; 
             object-fit: contain; background: #000; 
         }
-        #rotate-warning {
-            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: #000; color: white; text-align: center; z-index: 1000;
-            flex-direction: column; justify-content: center; align-items: center;
-        }
-        @media (orientation: portrait) { #rotate-warning { display: flex; } }
     </style>
 </head>
 <body>
-    <div id="rotate-warning">
-        <h2>🏀 Переверните телефон</h2>
-        <p>Для игры нужен альбомный режим</p>
-    </div>
     <canvas id="game"></canvas>
 
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-// Базовое разрешение игры
+// Константы разрешения
 const W = 1280, H = 720;
 canvas.width = W; canvas.height = H;
-
-const FLOOR_Y = 650;
-const hoop = { x: 640, y: 300, z: 120 };
 
 const courtImg = new Image();
 courtImg.src = "Basketball-Court-vector-illustra.jpg";
 
+// Состояние игры
 let state = "MOVE"; 
 let score = 0;
-let powerPoint = 0, powerDir = 0.008, resultText = "";
-const gravity = 0.45;
-const ball = { x: 640, y: 600, z: 0, vx: 0, vy: 0, vz: 0, r: 22, active: false, bounced: false, isPerfect: false };
+let playerX = W / 2;
+let aimAngle = Math.PI / 2;
+let powerPoint = 0, powerDir = 0.02, resultText = "";
+const ball = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, active: false };
 
-// Новые переменные для управления кнопками
-let playerPos = W / 2; // Горизонтальная позиция игрока
-let aimAngle = Math.PI / 2; // Угол прицеливания (0 - вправо, PI - влево, PI/2 - прямо)
-let aimTargetX = hoop.x; // Цель прицеливания по X
-let aimTargetY = hoop.y; // Цель прицеливания по Y
-
-// Настройки кнопок
-const BUTTON_SIZE = 80;
-const BUTTON_PADDING = 20;
-
-const buttons = {
-    left: { x: W - BUTTON_SIZE * 3 - BUTTON_PADDING * 3, y: H - BUTTON_SIZE - BUTTON_PADDING, w: BUTTON_SIZE, h: BUTTON_SIZE, action: "moveLeft" },
-    right: { x: W - BUTTON_SIZE * 2 - BUTTON_PADDING * 2, y: H - BUTTON_SIZE - BUTTON_PADDING, w: BUTTON_SIZE, h: BUTTON_SIZE, action: "moveRight" },
-    aimLeft: { x: W - BUTTON_SIZE * 3 - BUTTON_PADDING * 3, y: H - BUTTON_SIZE * 2 - BUTTON_PADDING * 2, w: BUTTON_SIZE, h: BUTTON_SIZE, action: "aimLeft" },
-    aimRight: { x: W - BUTTON_SIZE * 2 - BUTTON_PADDING * 2, y: H - BUTTON_SIZE * 2 - BUTTON_PADDING * 2, w: BUTTON_SIZE, h: BUTTON_SIZE, action: "aimRight" },
-    shoot: { x: BUTTON_PADDING, y: H - BUTTON_SIZE - BUTTON_PADDING, w: BUTTON_SIZE * 1.5, h: BUTTON_SIZE * 1.5, action: "shoot" } // Большая кнопка-мяч
+// Кнопки с увеличенной областью нажатия
+const btns = {
+    moveLeft:  { x: 850,  y: 550, w: 130, h: 130, color: "#e74c3c", txt: "◀", active: false },
+    moveRight: { x: 1130, y: 550, w: 130, h: 130, color: "#e74c3c", txt: "▶", active: false },
+    aimUp:     { x: 990,  y: 410, w: 130, h: 130, color: "#3498db", txt: "▲", active: false },
+    aimDown:   { x: 990,  y: 550, w: 130, h: 130, color: "#3498db", txt: "▼", active: false },
+    shoot:     { x: 20,   y: 480, w: 220, h: 220, color: "#f39c12", txt: "БРОСОК", active: false }
 };
 
-/* ================= INPUT ENGINE (BUTTONS) ================= */
-function isPointInRect(px, py, rx, ry, rw, rh) {
-    return px > rx && px < rx + rw && py > ry && py < ry + rh;
-}
-
-function handleButtonPress(clientX, clientY) {
+/* ================= ЛОГИКА НАЖАТИЙ ================= */
+function checkInput(ex, ey, isRelease = false) {
     const rect = canvas.getBoundingClientRect();
-    const scaleX = W / rect.width;
-    const scaleY = H / rect.height;
-    const clickX = (clientX - rect.left) * scaleX;
-    const clickY = (clientY - rect.top) * scaleY;
+    const x = (ex - rect.left) * (W / rect.width);
+    const y = (ey - rect.top) * (H / rect.height);
 
-    if (audioCtx.state === 'suspended') audioCtx.resume(); // Активируем звук
-
-    for (const key in buttons) {
-        const btn = buttons[key];
-        if (isPointInRect(clickX, clickY, btn.x, btn.y, btn.w, btn.h)) {
-            performAction(btn.action);
-            return; // Обрабатываем только одно нажатие
+    for (let key in btns) {
+        let b = btns[key];
+        if (x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h) {
+            if (isRelease) {
+                b.active = false;
+            } else {
+                b.active = true;
+                processAction(key);
+            }
+        } else if (isRelease) {
+            b.active = false;
         }
     }
 }
 
-function performAction(action) {
-    switch (action) {
-        case "moveLeft":
-            if (state === "MOVE") playerPos = Math.max(200, playerPos - 15);
-            break;
-        case "moveRight":
-            if (state === "MOVE") playerPos = Math.min(W - 200, playerPos + 15);
-            break;
-        case "aimLeft":
-            if (state === "AIM_LINE") aimAngle = Math.min(Math.PI * 0.8, aimAngle + 0.05); // Ограничиваем угол
-            break;
-        case "aimRight":
-            if (state === "AIM_LINE") aimAngle = Math.max(Math.PI * 0.2, aimAngle - 0.05); // Ограничиваем угол
-            break;
-        case "shoot":
-            if (state === "MOVE") {
-                state = "AIM_LINE";
-            } else if (state === "AIM_LINE") {
-                // Фиксируем текущую траекторию как целевую
-                // Для параболы нужна дистанция и угол
-                const dist = Math.abs(hoop.x - ball.x);
-                aimTargetX = ball.x + Math.cos(aimAngle) * dist * 1.5; // Управляем X-компонентом
-                aimTargetY = ball.y - Math.sin(aimAngle) * dist * 1.5; // Управляем Y-компонентом
-                state = "TIMING";
-                powerPoint = 0;
-            } else if (state === "TIMING") {
-                shoot(powerPoint > 0.75);
-                state = "SHOT";
-            } else if (state === "RESULT") {
-                state = "MOVE";
-                ball.active = false;
-                resultText = "";
-            }
-            break;
-    }
-}
-
-// TOUCH Events
-canvas.addEventListener("touchstart", e => { e.preventDefault(); handleButtonPress(e.touches[0].clientX, e.touches[0].clientY); }, {passive: false});
-// MOUSE Events (для ПК)
-canvas.addEventListener("mousedown", e => handleButtonPress(e.clientX, e.clientY));
-
-/* ================= AUDIO & VIBRATE ================= */
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-function playSound(freq, duration) {
-    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.type = "triangle"; o.frequency.setValueAtTime(freq, audioCtx.currentTime);
-    g.gain.setValueAtTime(0.1, audioCtx.currentTime);
-    g.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
-    o.connect(g); g.connect(audioCtx.destination);
-    o.start(); o.stop(audioCtx.currentTime + duration);
-}
-function vibrate(ms) { if (navigator.vibrate) navigator.vibrate(ms); }
-
-/* ================= GAME LOGIC ================= */
-function shoot(perfect) {
-    ball.active = true; ball.bounced = false; ball.isPerfect = perfect;
-    const T = 75;
-    ball.vx = (hoop.x - ball.x) / T;
-    ball.vz = (hoop.z - ball.z) / T;
-    const heightErr = perfect ? 0 : (0.75 - powerPoint) * 10;
-    ball.vy = (hoop.y - ball.y - 0.5 * gravity * T * T) / T + heightErr;
-}
-
-function update() {
+function processAction(action) {
     if (state === "MOVE") {
-        ball.z = 50; // Фиксированная глубина для MOVE
-        ball.x = playerPos;
-        ball.y = FLOOR_Y - ball.z * 1.5;
+        if (action === "moveLeft") playerX -= 40;
+        if (action === "moveRight") playerX += 40;
     }
     if (state === "AIM_LINE") {
-        // Обновляем цель прицеливания
-        const distToHoop = Math.sqrt(Math.pow(hoop.x - ball.x, 2) + Math.pow(hoop.y - ball.y, 2));
-        aimTargetX = ball.x + Math.cos(aimAngle) * distToHoop;
-        aimTargetY = ball.y - Math.sin(aimAngle) * distToHoop;
+        if (action === "aimUp") aimAngle += 0.15;
+        if (action === "aimDown") aimAngle -= 0.15;
     }
-    if (state === "TIMING") {
-        powerPoint += powerDir;
-        if (powerPoint > 1 || powerPoint < 0) powerDir *= -1;
-    }
-    if (state === "SHOT" && ball.active) {
-        ball.x += ball.vx; ball.y += ball.vy; ball.z += ball.vz; ball.vy += gravity;
-        if (ball.z >= hoop.z && !ball.bounced) {
-            ball.bounced = true;
-            const xDist = Math.abs(ball.x - hoop.x);
-            if (ball.isPerfect && xDist < 55) {
-                ball.vz = 0; ball.vx *= 0.1; ball.vy = 2; score += 3;
-                resultText = "ПОПАДАНИЕ! +3"; playSound(800, 0.4); vibrate(40);
-            } else {
-                ball.vz *= -0.6; ball.vy = -3; ball.vx += (Math.random()-0.5)*12;
-                resultText = "ПРОМАХ"; playSound(150, 0.2); vibrate([50, 50, 50]);
-            }
-        }
-        if (ball.y >= FLOOR_Y) { ball.y = FLOOR_Y; ball.active = false; state = "RESULT"; }
-    }
-}
-
-/* ================= RENDER ================= */
-function drawButton(btn, text, color = "rgba(255,255,255,0.7)", textColor = "black") {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 10);
-    ctx.fill();
-    ctx.strokeStyle = "black";
-    ctx.lineWidth = 3;
-    ctx.stroke();
-
-    ctx.fillStyle = textColor;
-    ctx.font = `bold ${btn.h * 0.5}px Arial`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, btn.x + btn.w / 2, btn.y + btn.h / 2);
-}
-
-function drawShootButton() {
-    const btn = buttons.shoot;
-    ctx.save();
-    ctx.shadowColor = "rgba(255,255,0,0.8)";
-    ctx.shadowBlur = (state === "MOVE" || state === "AIM_LINE" || state === "TIMING") ? 15 : 0;
     
-    ctx.fillStyle = (state === "TIMING" && powerPoint > 0.75) ? "#00ff00" : "orange";
-    ctx.beginPath();
-    ctx.arc(btn.x + btn.w / 2, btn.y + btn.h / 2, btn.w / 2 - 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "black";
-    ctx.lineWidth = 4;
-    ctx.stroke();
-
-    ctx.fillStyle = "black";
-    ctx.font = `bold ${btn.h * 0.3}px Arial`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("БРОСОК", btn.x + btn.w / 2, btn.y + btn.h / 2);
-    ctx.restore();
+    if (action === "shoot") {
+        if (state === "MOVE") state = "AIM_LINE";
+        else if (state === "AIM_LINE") { state = "TIMING"; powerPoint = 0; }
+        else if (state === "TIMING") { launch(powerPoint > 0.7); state = "SHOT"; }
+        else if (state === "RESULT") { state = "MOVE"; ball.active = false; }
+    }
 }
 
-function drawParabolaPath() {
-    const startX = ball.x, startY = ball.y;
-    const targetX = aimTargetX; 
-    const targetY = aimTargetY;
+// Слушатели событий
+canvas.addEventListener("touchstart", e => { 
+    e.preventDefault(); 
+    checkInput(e.touches[0].clientX, e.touches[0].clientY); 
+}, {passive: false});
 
-    const cpX = (startX + targetX) / 2;
-    const cpY = Math.min(startY, targetY) - 220; 
+canvas.addEventListener("touchend", e => {
+    for (let key in btns) btns[key].active = false;
+});
 
-    ctx.save(); ctx.shadowColor = "white"; ctx.shadowBlur = 4;
-    ctx.setLineDash([8, 8]); ctx.strokeStyle = "black"; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.moveTo(startX, startY); ctx.quadraticCurveTo(cpX, cpY, targetX, targetY); ctx.stroke(); ctx.restore();
+canvas.addEventListener("mousedown", e => checkInput(e.clientX, e.clientY));
+canvas.addEventListener("mouseup", () => { for (let key in btns) btns[key].active = false; });
 
-    if (state === "TIMING") {
-        const t = powerPoint;
-        const dotX = (1-t)*(1-t)*startX + 2*(1-t)*t*cpX + t*t*targetX;
-        const dotY = (1-t)*(1-t)*startY + 2*(1-t)*t*cpY + t*t*targetY;
-        ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(dotX, dotY, 15, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = t > 0.75 ? "#00ff00" : "#ff0000"; ctx.beginPath(); ctx.arc(dotX, dotY, 10, 0, Math.PI*2); ctx.fill();
-    }
+/* ================= ГЕЙМПЛЕЙ ================= */
+function launch(perfect) {
+    ball.active = true;
+    ball.x = playerX; ball.y = 600;
+    const T = 65;
+    ball.vx = (640 - ball.x) / T;
+    ball.vy = (300 - ball.y - 0.5 * 0.5 * T * T) / T + (perfect ? 0 : 6);
 }
 
 function draw() {
     ctx.clearRect(0, 0, W, H);
-    ctx.drawImage(courtImg, 0, 0, W, H);
-    
-    // Тень
-    ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath();
-    ctx.ellipse(ball.x, FLOOR_Y, 45 * (1-ball.z/200), 15 * (1-ball.z/200), 0, 0, Math.PI*2); ctx.fill();
+    if (courtImg.complete) ctx.drawImage(courtImg, 0, 0, W, H);
 
-    if (state === "AIM_LINE" || state === "TIMING") drawParabolaPath();
+    if (state === "MOVE") { ball.x = playerX; ball.y = 600; }
+
+    // Линия прицела
+    if (state === "AIM_LINE" || state === "TIMING") {
+        ctx.strokeStyle = "black"; ctx.lineWidth = 6; ctx.setLineDash([15, 10]);
+        ctx.beginPath(); ctx.moveTo(ball.x, ball.y);
+        ctx.quadraticCurveTo(ball.x + Math.cos(aimAngle)*250, ball.y - 450, 640, 310);
+        ctx.stroke(); ctx.setLineDash([]);
+    }
 
     // Мяч
-    ctx.beginPath(); ctx.fillStyle = (ball.isPerfect && ball.active) ? "#00ff66" : "orange";
-    ctx.arc(ball.x, ball.y, ball.r * (1-ball.z/250), 0, Math.PI*2); ctx.fill(); 
-    ctx.strokeStyle = "black"; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = "#e67e22"; ctx.beginPath();
+    ctx.arc(ball.x, ball.y, 30, 0, Math.PI*2); ctx.fill(); ctx.stroke();
 
-    // UI
-    ctx.save(); ctx.fillStyle = "black"; ctx.font = "bold 34px Arial"; ctx.shadowColor = "white"; ctx.shadowBlur = 10;
-    ctx.fillText("СЧЕТ: " + score, 40, 60); ctx.restore();
+    // Кнопки
+    for (let k in btns) {
+        let b = btns[k];
+        ctx.fillStyle = b.active ? "#fff" : b.color;
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 20); ctx.fill();
+        ctx.strokeStyle = "white"; ctx.lineWidth = 4; ctx.stroke();
+        ctx.globalAlpha = 1.0;
+        ctx.fillStyle = b.active ? "black" : "white"; ctx.font = "bold 40px Arial";
+        ctx.textAlign = "center"; ctx.fillText(b.txt, b.x + b.w/2, b.y + b.h/2 + 15);
+    }
 
+    // Шкала тайминга
+    if (state === "TIMING") {
+        powerPoint += powerDir; if (powerPoint > 1 || powerPoint < 0) powerDir *= -1;
+        ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(20, 430, 220, 40);
+        ctx.fillStyle = powerPoint > 0.7 ? "#2ecc71" : "#e74c3c";
+        ctx.fillRect(25, 435, 210 * powerPoint, 30);
+    }
+
+    // Текст
+    ctx.fillStyle = "black"; ctx.font = "bold 45px Arial"; ctx.textAlign = "left";
+    ctx.shadowColor = "white"; ctx.shadowBlur = 10;
+    ctx.fillText("СЧЕТ: " + score, 40, 70);
     if (state === "RESULT") {
-        ctx.textAlign = "center"; ctx.font = "bold 75px Arial"; ctx.fillStyle = "black";
-        ctx.shadowColor = "white"; ctx.shadowBlur = 12; ctx.fillText(resultText, W/2, H/2); ctx.textAlign = "left";
+        ctx.textAlign = "center"; ctx.fillText(resultText, W/2, H/2);
     }
 
-    // Кнопки управления
-    if (state === "MOVE") {
-        drawButton(buttons.left, "◀");
-        drawButton(buttons.right, "▶");
-    } else if (state === "AIM_LINE") {
-        drawButton(buttons.aimLeft, "▲"); // Стрелки для изменения угла прицеливания
-        drawButton(buttons.aimRight, "▼");
+    if (state === "SHOT") {
+        ball.x += ball.vx; ball.y += ball.vy; ball.vy += 0.5;
+        if (ball.y > 750) { state = "RESULT"; resultText = "ПРОМАХ! НАЖМИ БРОСОК"; }
+        if (Math.abs(ball.x - 640) < 40 && Math.abs(ball.y - 310) < 40) { 
+            score += 3; state = "RESULT"; resultText = "ПОПАДАНИЕ! +3"; 
+        }
     }
-    drawShootButton(); // Кнопка броска всегда видима
-
     requestAnimationFrame(draw);
 }
-
-courtImg.onload = () => draw();
-update();
+courtImg.onload = draw;
 </script>
 </body>
 </html>
