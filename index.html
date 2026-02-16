@@ -2,20 +2,44 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Basketball Easy Parabola - Black UI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Basketball Mobile Pro</title>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: 'Arial Black', sans-serif; }
-        canvas { display: block; margin: auto; background: #000; }
+        /* Блокируем любые движения фона и страницы */
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            overflow: hidden; background: #000; position: fixed;
+            touch-action: none; -webkit-user-select: none;
+        }
+        canvas { 
+            display: block; width: 100vw; height: 100vh; 
+            object-fit: contain; background: #000; 
+        }
+        /* Текст при неправильной ориентации */
+        #rotate-warning {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; color: white; text-align: center; z-index: 1000;
+            flex-direction: column; justify-content: center; align-items: center;
+        }
+        @media (orientation: portrait) { #rotate-warning { display: flex; } }
     </style>
 </head>
 <body>
-<canvas id="game" width="1280" height="720"></canvas>
+    <div id="rotate-warning">
+        <h2>🏀 Пожалуйста, переверните устройство</h2>
+        <p>Для игры нужен альбомный режим</p>
+    </div>
+    <canvas id="game"></canvas>
 
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-const W = 1280, H = 720, FLOOR_Y = 650;
+// Динамический размер
+const W = 1280, H = 720;
+canvas.width = W; canvas.height = H;
+
+const FLOOR_Y = 650;
 const hoop = { x: 640, y: 300, z: 120 };
 
 const courtImg = new Image();
@@ -24,64 +48,81 @@ courtImg.src = "Basketball-Court-vector-illustra.jpg";
 let state = "MOVE"; 
 let mouse = { x: W/2, y: H/2 };
 let score = 0;
-
-// Настройки прицела
-let powerPoint = 0; 
-let powerDir = 0.008; // Медленная скорость
-let finalTarget = { x: 0, y: 0 };
-let resultText = "";
-
+let powerPoint = 0, powerDir = 0.012, finalTarget = { x: 0, y: 0 }, resultText = "";
 const gravity = 0.45;
 const ball = { x: 640, y: 600, z: 0, vx: 0, vy: 0, vz: 0, r: 22, active: false, bounced: false, isPerfect: false };
+
+/* ================= MOBILE TOOLS ================= */
+function vibrate(ms) {
+    if ("vibrate" in navigator) navigator.vibrate(ms);
+}
+
+function requestFullScreen() {
+    const el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen();
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+}
+
+/* ================= INPUT ================= */
+// Обработка тач-событий вместо мыши
+function getTouchPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const touch = e.touches[0] || e.changedTouches[0];
+    return {
+        x: (touch.clientX - rect.left) * scaleX,
+        y: (touch.clientY - rect.top) * scaleY
+    };
+}
+
+canvas.addEventListener("touchstart", e => {
+    e.preventDefault();
+    requestFullScreen();
+    const pos = getTouchPos(e);
+    mouse.x = pos.x; mouse.y = pos.y;
+    handleInput();
+}, {passive: false});
+
+canvas.addEventListener("touchmove", e => {
+    e.preventDefault();
+    const pos = getTouchPos(e);
+    mouse.x = pos.x; mouse.y = pos.y;
+}, {passive: false});
+
+// Клик мышкой для отладки на ПК
+canvas.addEventListener("mousedown", handleInput);
+canvas.addEventListener("mousemove", e => {
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = (e.clientX - rect.left) * (W / rect.width);
+    mouse.y = (e.clientY - rect.top) * (H / rect.height);
+});
+
+function handleInput() {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (state === "MOVE") state = "AIM_LINE";
+    else if (state === "AIM_LINE") { finalTarget.x = mouse.x; finalTarget.y = mouse.y; state = "TIMING"; powerPoint = 0; }
+    else if (state === "TIMING") { shoot(powerPoint > 0.75); state = "SHOT"; }
+    else if (state === "RESULT") { state = "MOVE"; ball.active = false; }
+}
 
 /* ================= AUDIO ================= */
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 function playSound(freq, duration, type="triangle") {
-    if(audioCtx.state === 'suspended') audioCtx.resume();
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
     o.type = type; o.frequency.setValueAtTime(freq, audioCtx.currentTime);
-    o.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + duration);
     g.gain.setValueAtTime(0.1, audioCtx.currentTime);
     g.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
     o.connect(g); g.connect(audioCtx.destination);
     o.start(); o.stop(audioCtx.currentTime + duration);
 }
 
-/* ================= INPUT ================= */
-canvas.addEventListener("mousemove", e => {
-    mouse.x = e.offsetX;
-    mouse.y = e.offsetY;
-});
-
-canvas.addEventListener("click", () => {
-    if (state === "MOVE") {
-        state = "AIM_LINE";
-    } else if (state === "AIM_LINE") {
-        finalTarget.x = mouse.x;
-        finalTarget.y = mouse.y;
-        state = "TIMING";
-        powerPoint = 0;
-    } else if (state === "TIMING") {
-        const isGreen = powerPoint > 0.75; 
-        shoot(isGreen);
-        state = "SHOT";
-    } else if (state === "RESULT") {
-        state = "MOVE";
-        ball.active = false;
-        resultText = "";
-    }
-});
-
 /* ================= LOGIC ================= */
 function shoot(perfect) {
-    ball.active = true;
-    ball.bounced = false;
-    ball.isPerfect = perfect;
+    ball.active = true; ball.bounced = false; ball.isPerfect = perfect;
     const T = 75;
-
     ball.vx = (hoop.x - ball.x) / T;
     ball.vz = (hoop.z - ball.z) / T;
-    
     const heightCorrection = perfect ? 0 : (0.75 - powerPoint) * 8;
     ball.vy = (hoop.y - ball.y - 0.5 * gravity * T * T) / T + heightCorrection;
 }
@@ -92,132 +133,70 @@ function update() {
         ball.x = mouse.x;
         ball.y = FLOOR_Y - ball.z * 1.5;
     }
-
     if (state === "TIMING") {
         powerPoint += powerDir;
         if (powerPoint > 1 || powerPoint < 0) powerDir *= -1;
     }
-
     if (state === "SHOT" && ball.active) {
-        ball.x += ball.vx;
-        ball.y += ball.vy;
-        ball.z += ball.vz;
-        ball.vy += gravity;
-
+        ball.x += ball.vx; ball.y += ball.vy; ball.z += ball.vz; ball.vy += gravity;
         if (ball.z >= hoop.z && !ball.bounced) {
             ball.bounced = true;
-            const xDist = Math.abs(ball.x - hoop.x);
-            if (ball.isPerfect && xDist < 50) {
-                ball.vz = 0; ball.vx *= 0.1; ball.vy = 2;
-                score += 3; resultText = "ОТЛИЧНО! +3";
-                playSound(800, 0.4);
+            if (ball.isPerfect && Math.abs(ball.x - hoop.x) < 50) {
+                ball.vz = 0; ball.vx *= 0.1; ball.vy = 2; score += 3;
+                resultText = "ПОПАДАНИЕ! +3"; playSound(800, 0.4); vibrate(50); // Легкая вибрация
             } else {
                 ball.vz *= -0.6; ball.vy = -3; ball.vx += (Math.random()-0.5)*10;
-                resultText = "ПРОМАХ";
-                playSound(150, 0.2, "square");
+                resultText = "ПРОМАХ"; playSound(150, 0.2, "square"); vibrate([100, 50, 100]); // Двойная вибрация
             }
         }
-
-        if (ball.y >= FLOOR_Y) {
-            ball.y = FLOOR_Y; ball.active = false;
-            state = "RESULT";
-        }
+        if (ball.y >= FLOOR_Y) { ball.y = FLOOR_Y; ball.active = false; state = "RESULT"; }
     }
 }
 
 /* ================= RENDER ================= */
-function drawParabolaPath() {
-    const startX = ball.x;
-    const startY = ball.y;
-    const targetX = (state === "AIM_LINE") ? mouse.x : finalTarget.x;
-    const targetY = (state === "AIM_LINE") ? mouse.y : finalTarget.y;
-
-    const cpX = (startX + targetX) / 2;
-    const cpY = Math.min(startY, targetY) - 200; 
-
-    ctx.save();
-    ctx.shadowColor = "white";
-    ctx.shadowBlur = 4;
-    ctx.setLineDash([8, 8]);
-    ctx.strokeStyle = "black";
-    ctx.lineWidth = 3;
-
-    ctx.beginPath();
-    ctx.moveTo(startX, startY);
-    ctx.quadraticCurveTo(cpX, cpY, targetX, targetY);
-    ctx.stroke();
-    ctx.restore();
-
-    if (state === "TIMING") {
-        const t = powerPoint;
-        const dotX = (1 - t) * (1 - t) * startX + 2 * (1 - t) * t * cpX + t * t * targetX;
-        const dotY = (1 - t) * (1 - t) * startY + 2 * (1 - t) * t * cpY + t * t * targetY;
-
-        ctx.fillStyle = "white";
-        ctx.beginPath();
-        ctx.arc(dotX, dotY, 14, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = t > 0.75 ? "#00ff00" : "#ff0000";
-        ctx.beginPath();
-        ctx.arc(dotX, dotY, 10, 0, Math.PI * 2);
-        ctx.fill();
-        
-        ctx.font = "bold 20px Arial";
-        ctx.fillStyle = "white";
-        ctx.strokeStyle = "black";
-        ctx.lineWidth = 3;
-        ctx.strokeText("БРОСАЙ!", dotX + 25, dotY);
-        ctx.fillText("БРОСАЙ!", dotX + 25, dotY);
-    }
-}
-
-function loop() {
-    update();
+function draw() {
     ctx.clearRect(0, 0, W, H);
     ctx.drawImage(courtImg, 0, 0, W, H);
     
     // Тень
-    let sScale = 1 - ball.z / 200;
-    ctx.fillStyle = "rgba(0,0,0,0.3)";
-    ctx.beginPath();
-    ctx.ellipse(ball.x, FLOOR_Y, 45 * sScale, 15 * sScale, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath();
+    ctx.ellipse(ball.x, FLOOR_Y, 45 * (1-ball.z/200), 15 * (1-ball.z/200), 0, 0, Math.PI*2); ctx.fill();
 
-    if (state === "AIM_LINE" || state === "TIMING") drawParabolaPath();
+    if (state === "AIM_LINE" || state === "TIMING") {
+        const startX = ball.x, startY = ball.y;
+        const targetX = (state === "AIM_LINE") ? mouse.x : finalTarget.x;
+        const targetY = (state === "AIM_LINE") ? mouse.y : finalTarget.y;
+        const cpX = (startX + targetX) / 2, cpY = Math.min(startY, targetY) - 200;
 
-    // Мяч
-    let bScale = 1 - ball.z / 250;
-    ctx.beginPath();
-    ctx.fillStyle = (ball.isPerfect && ball.active) ? "#00ff66" : "orange";
-    ctx.arc(ball.x, ball.y, ball.r * bScale, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+        ctx.save(); ctx.shadowColor = "white"; ctx.shadowBlur = 4; ctx.setLineDash([8, 8]);
+        ctx.strokeStyle = "black"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(startX, startY); ctx.quadraticCurveTo(cpX, cpY, targetX, targetY); ctx.stroke(); ctx.restore();
 
-    // UI - СЧЕТ ТЕПЕРЬ ЧЕРНЫЙ
-    ctx.save();
-    ctx.fillStyle = "black";
-    ctx.font = "bold 30px Arial";
-    // Белая тень для читаемости на темном фоне
-    ctx.shadowColor = "white";
-    ctx.shadowBlur = 8;
-    ctx.fillText("СЧЕТ: " + score, 40, 50);
-    ctx.restore();
-
-    if (state === "RESULT") {
-        ctx.textAlign = "center";
-        ctx.font = "bold 60px Arial";
-        ctx.fillStyle = "black";
-        ctx.shadowColor = "white";
-        ctx.shadowBlur = 10;
-        ctx.fillText(resultText, W/2, H/2);
-        ctx.textAlign = "left";
+        if (state === "TIMING") {
+            const t = powerPoint;
+            const dotX = (1-t)*(1-t)*startX + 2*(1-t)*t*cpX + t*t*targetX;
+            const dotY = (1-t)*(1-t)*startY + 2*(1-t)*t*cpY + t*t*targetY;
+            ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(dotX, dotY, 14, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = t > 0.75 ? "#00ff00" : "#ff0000"; ctx.beginPath(); ctx.arc(dotX, dotY, 10, 0, Math.PI*2); ctx.fill();
+        }
     }
 
-    requestAnimationFrame(loop);
+    // Мяч
+    ctx.beginPath(); ctx.fillStyle = (ball.isPerfect && ball.active) ? "#00ff66" : "orange";
+    ctx.arc(ball.x, ball.y, ball.r * (1-ball.z/250), 0, Math.PI*2); ctx.fill(); ctx.stroke();
+
+    // UI
+    ctx.save(); ctx.fillStyle = "black"; ctx.font = "bold 30px Arial"; ctx.shadowColor = "white"; ctx.shadowBlur = 8;
+    ctx.fillText("СЧЕТ: " + score, 40, 50); ctx.restore();
+
+    if (state === "RESULT") {
+        ctx.textAlign = "center"; ctx.font = "bold 70px Arial"; ctx.fillStyle = "black";
+        ctx.shadowColor = "white"; ctx.shadowBlur = 10; ctx.fillText(resultText, W/2, H/2); ctx.textAlign = "left";
+    }
+    requestAnimationFrame(draw);
 }
 
-courtImg.onload = () => loop();
+courtImg.onload = () => draw();
 </script>
 </body>
 </html>
